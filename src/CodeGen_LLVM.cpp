@@ -250,7 +250,9 @@ CodeGen_LLVM::CodeGen_LLVM(Target t) :
 
     min_f64(Float(64).min()),
     max_f64(Float(64).max()),
-    destructor_block(nullptr) {
+    destructor_block(nullptr),
+    continue_block(nullptr),
+    sync_region(nullptr) {
     initialize_llvm();
 }
 
@@ -615,6 +617,8 @@ void CodeGen_LLVM::begin_func(LoweredFunc::LinkageType linkage, const std::strin
 
     // Null out the destructor block.
     destructor_block = nullptr;
+    continue_block = nullptr;
+    sync_region = nullptr;
 
     // Make the initial basic block
     BasicBlock *block = BasicBlock::Create(*context, "entry", function);
@@ -658,7 +662,11 @@ void CodeGen_LLVM::end_func(const std::vector<LoweredArgument>& args) {
     }
 
     llvm::raw_os_ostream os(std::cerr);
-    internal_assert(!verifyFunction(*function, &os));
+    auto foo = verifyFunction(*function, &os);
+    if (foo) {
+        function->dump();
+    }
+    internal_assert(!foo);
 
     current_function_args.clear();
 }
@@ -707,6 +715,8 @@ std::vector<llvm::Constant*> get_constants(llvm::Type *t, It begin, It end) {
 }
 
 BasicBlock *CodeGen_LLVM::get_destructor_block() {
+
+
     if (!destructor_block) {
         // Create it if it doesn't exist.
         IRBuilderBase::InsertPoint here = builder->saveIP();
@@ -718,8 +728,12 @@ BasicBlock *CodeGen_LLVM::get_destructor_block() {
 
         // Calls to destructors will get inserted here.
 
-        // The last instruction is the return op that returns it.
-        builder->CreateRet(error_code);
+        if (continue_block) {
+            builder->CreateReattach(continue_block, sync_region);
+        } else {
+            // The last instruction is the return op that returns it.
+            builder->CreateRet(error_code);
+        }
 
         // Jump back to where we were.
         builder->restoreIP(here);
@@ -1030,6 +1044,9 @@ void CodeGen_LLVM::optimize_module() {
     function_pass_manager.add(createTargetTransformInfoWrapperPass(TM ? TM->getTargetIRAnalysis() : TargetIRAnalysis()));
 
     PassManagerBuilder b;
+
+    b.ParallelLevel = 2;
+
     b.OptLevel = 3;
 #if LLVM_VERSION >= 50
     b.Inliner = createFunctionInliningPass(b.OptLevel, 0, false);
@@ -2994,6 +3011,87 @@ void CodeGen_LLVM::visit(const For *op) {
         sym_pop(op->name);
     } else if (op->for_type == ForType::Parallel) {
 
+        Value *max = builder->CreateNSWAdd(min, extent);
+
+        BasicBlock *preheader_bb = builder->GetInsertBlock();
+
+        Instruction *SyncRegionStart = builder->CreateCall(
+            Intrinsic::getDeclaration(preheader_bb->getParent()->getParent(), Intrinsic::syncregion_start),
+            {},
+            "syncreg");
+
+        // Make a new basic block for the loop
+        BasicBlock *loop_bb = BasicBlock::Create(*context, std::string("pfor ") + op->name, function);
+
+        // Make a new basic block for the loop
+        BasicBlock *body_bb = BasicBlock::Create(*context, std::string("pbody ") + op->name, function);
+
+        // Make a new basic block for the loop
+        BasicBlock *latch_bb = BasicBlock::Create(*context, std::string("platch ") + op->name, function);
+
+        // Create the block that comes after the loop
+        BasicBlock *after_bb = BasicBlock::Create(*context, std::string("end pfor ") + op->name, function);
+
+        // Create the block that comes after the loop
+        BasicBlock *sync_bb = BasicBlock::Create(*context, std::string("sync pfor ") + op->name, function);
+
+        // If min < max, fall through to the loop bb
+        Value *enter_condition = builder->CreateICmpSLT(min, max);
+        builder->CreateCondBr(enter_condition, loop_bb, after_bb, very_likely_branch);
+        builder->SetInsertPoint(loop_bb);
+
+        // Make our phi node.
+        PHINode *phi = builder->CreatePHI(i32_t, 2);
+        phi->addIncoming(min, preheader_bb);
+
+        builder->CreateDetach(body_bb, latch_bb, SyncRegionStart);
+	    builder->SetInsertPoint(body_bb);
+
+        // Save the destructor block
+        BasicBlock *parent_destructor_block = destructor_block;
+        destructor_block = nullptr;
+        BasicBlock *parent_continue_block = continue_block;
+        continue_block = latch_bb;
+        Value *parent_sync_region = sync_region;
+        sync_region = SyncRegionStart;
+
+        // Within the loop, the variable is equal to the phi value
+        sym_push(op->name, phi);
+
+        // Emit the loop body
+        codegen(op->body);
+
+        return_with_error_code(ConstantInt::get(i32_t, 0));
+
+	    builder->SetInsertPoint(latch_bb);
+
+        // Update the counter
+        Value *next_var = builder->CreateNSWAdd(phi, ConstantInt::get(i32_t, 1));
+
+        // Add the back-edge to the phi node
+        phi->addIncoming(next_var, builder->GetInsertBlock());
+
+        // Maybe exit the loop
+        Value *end_condition = builder->CreateICmpNE(next_var, max);
+        builder->CreateCondBr(end_condition, loop_bb, after_bb);
+
+        builder->SetInsertPoint(after_bb);
+
+        // Pop the loop variable from the scope
+        sym_pop(op->name);
+
+	    builder->CreateSync(sync_bb, SyncRegionStart);
+
+	    builder->SetInsertPoint(sync_bb);
+        destructor_block = parent_destructor_block;
+        continue_block = parent_continue_block;
+        sync_region = parent_sync_region;
+
+        if (sync_bb->getParent()->getName() == "halide_dgemv_notrans") {
+            sync_bb->getParent()->dump();
+        }
+
+	#if 0
         debug(3) << "Entering parallel for loop over " << op->name << "\n";
 
         // Find every symbol that the body of this loop refers to
@@ -3091,7 +3189,7 @@ void CodeGen_LLVM::visit(const For *op) {
         // Check for success
         Value *did_succeed = builder->CreateICmpEQ(result, ConstantInt::get(i32_t, 0));
         create_assertion(did_succeed, Expr(), result);
-
+	#endif
     } else {
         internal_error << "Unknown type of For node. Only Serial and Parallel For nodes should survive down to codegen.\n";
     }

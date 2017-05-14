@@ -193,7 +193,7 @@ function(halide_add_aot_library_dependency TARGET AOT_LIBRARY_TARGET)
         set_target_properties("${TARGET}" PROPERTIES LINK_FLAGS "-Wl,--allow-multiple-definition")
       endif()
     else()
-      target_link_libraries("${TARGET}" PRIVATE dl pthread z)
+      target_link_libraries("${TARGET}" PRIVATE dl cilkrts pthread z)
     endif()
 endfunction(halide_add_aot_library_dependency)
 
