@@ -22,6 +22,8 @@ int main(int argc, char **argv) {
     Buffer<float> imf = f.realize(W, H);
 
     double parallelTime = benchmark(1, 1, [&]() { f.realize(imf); });
+    std::vector<Argument> args;
+    f.compile_to_llvm_assembly("parallel.ll", args);
 
     printf("Realizing g\n");
     Buffer<float> img = g.realize(W, H);
