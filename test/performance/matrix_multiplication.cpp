@@ -94,13 +94,13 @@ int main(int argc, char **argv) {
     }
 
     // Uncomment to see the generated assembly.
-    /*
+    
     {
         Target t = get_jit_target_from_environment();
         t.set_feature(Target::NoAsserts);
-        matrix_mul.compile_to_assembly("/dev/stdout", matrix_mul.infer_arguments(), t);
+        matrix_mul.compile_to_llvm_assembly("/dev/stdout", matrix_mul.infer_arguments(), t);
     }
-    */
+    
 
     float gflops = 2.0f * matrix_size * matrix_size * matrix_size / 1e6f;
 

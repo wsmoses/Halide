@@ -715,8 +715,6 @@ std::vector<llvm::Constant*> get_constants(llvm::Type *t, It begin, It end) {
 }
 
 BasicBlock *CodeGen_LLVM::get_destructor_block() {
-
-
     if (!destructor_block) {
         // Create it if it doesn't exist.
         IRBuilderBase::InsertPoint here = builder->saveIP();
@@ -3086,10 +3084,6 @@ void CodeGen_LLVM::visit(const For *op) {
         destructor_block = parent_destructor_block;
         continue_block = parent_continue_block;
         sync_region = parent_sync_region;
-
-        if (sync_bb->getParent()->getName() == "halide_dgemv_notrans") {
-            sync_bb->getParent()->dump();
-        }
 
 	#if 0
         debug(3) << "Entering parallel for loop over " << op->name << "\n";

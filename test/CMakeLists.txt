@@ -36,6 +36,7 @@ function(tests folder)
     list(APPEND TEST_NAMES "${TARGET}")
     target_include_directories("${TARGET}" PRIVATE "${CMAKE_SOURCE_DIR}")
     target_compile_definitions("${TARGET}"  PRIVATE "-DLLVM_VERSION=${LLVM_VERSION}")
+    # target_link_libraries("${TARGET}" PUBLIC "cilkrts")
 
     add_to_group(build_tests "${TARGET}" BUILD)
     if("${folder}" STREQUAL "error")
