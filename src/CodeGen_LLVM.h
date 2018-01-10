@@ -515,6 +515,8 @@ private:
      * destructors. As destructors are registered, code gets added
      * to this block. */
     llvm::BasicBlock *destructor_block;
+    llvm::BasicBlock *continue_block;
+    llvm::Value *sync_region;
 
     /** Turn off all unsafe math flags in scopes while this is set. */
     bool strict_float;
